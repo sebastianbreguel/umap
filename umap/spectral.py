@@ -16,6 +16,20 @@ from umap.distances import pairwise_special_metric, SPECIAL_METRICS
 from umap.sparse import SPARSE_SPECIAL_METRICS, sparse_named_distances
 
 
+def _dense_linkage_distances(data, component_labels, n_components, linkage):
+    """Max (complete) or min (single) distance between every pair of components."""
+    reducer = np.maximum if linkage == "complete" else np.minimum
+    # Sort the samples by component, so each component is one contiguous run.
+    order = np.argsort(component_labels)
+    run_starts = np.searchsorted(component_labels[order], np.arange(n_components))
+    distances = np.zeros((n_components, n_components))
+    for c_i in range(n_components - 1):
+        to_samples = reducer.reduce(data[component_labels == c_i], axis=0)
+        to_later = reducer.reduceat(to_samples[order], run_starts[c_i + 1 :])
+        distances[c_i, c_i + 1 :] = distances[c_i + 1 :, c_i] = to_later
+    return distances
+
+
 def component_layout(
     data,
     n_components,
@@ -89,6 +103,10 @@ def component_layout(
             block_sums = np.asarray((membership.T @ data) @ membership)
             distance_matrix = block_sums / np.outer(counts, counts)
             np.fill_diagonal(distance_matrix, 0.0)
+        elif linkage in ("complete", "single") and not scipy.sparse.issparse(data):
+            distance_matrix = _dense_linkage_distances(
+                np.asarray(data), component_labels, n_components, linkage
+            )
         else:
             if linkage == "complete":
                 reducer = np.max
